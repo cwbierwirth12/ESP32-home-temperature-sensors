@@ -1,0 +1,244 @@
+[
+    {
+        "id": "tab_temperature_dashboard",
+        "type": "tab",
+        "label": "Temperature Diagnostics",
+        "disabled": false,
+        "info": "SPDX-License-Identifier: GPL-3.0-only\nDeveloped with AI assistance. See ../NOTICE.md.\nSingle-device indoor diagnostics; change the MQTT topic for your device."
+    },
+    {
+        "id": "mqtt_local_broker",
+        "type": "mqtt-broker",
+        "name": "Local Mosquitto",
+        "broker": "localhost",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "ui_base_temperature_dashboard",
+        "type": "ui-base",
+        "name": "Temperature Dashboard",
+        "path": "/dashboard",
+        "includeClientData": true,
+        "acceptsClientConfig": [
+            "ui-notification",
+            "ui-control"
+        ],
+        "showPathInSidebar": false,
+        "navigationStyle": "default",
+        "titleBarStyle": "default"
+    },
+    {
+        "id": "ui_theme_temperature_dashboard",
+        "type": "ui-theme",
+        "name": "Diagnostic Theme",
+        "colors": {
+            "surface": "#ffffff",
+            "primary": "#2563eb",
+            "bgPage": "#f3f4f6",
+            "groupBg": "#ffffff",
+            "groupOutline": "#d1d5db"
+        },
+        "sizes": {
+            "density": "default",
+            "pagePadding": "12px",
+            "groupGap": "12px",
+            "groupBorderRadius": "6px",
+            "widgetGap": "12px"
+        }
+    },
+    {
+        "id": "ui_page_temperature_dashboard",
+        "type": "ui-page",
+        "name": "Diagnostics",
+        "ui": "ui_base_temperature_dashboard",
+        "path": "/diagnostics",
+        "icon": "home",
+        "layout": "grid",
+        "theme": "ui_theme_temperature_dashboard",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": "0",
+                "cols": "3"
+            },
+            {
+                "name": "Tablet",
+                "px": "576",
+                "cols": "6"
+            },
+            {
+                "name": "Desktop",
+                "px": "1024",
+                "cols": "9"
+            }
+        ],
+        "order": 1,
+        "className": "",
+        "visible": true,
+        "disabled": false
+    },
+    {
+        "id": "ui_group_current_reading",
+        "type": "ui-group",
+        "name": "Current Reading",
+        "page": "ui_page_temperature_dashboard",
+        "width": "9",
+        "height": "1",
+        "order": 1,
+        "showTitle": true,
+        "className": "",
+        "visible": "true",
+        "disabled": "false",
+        "groupType": "default"
+    },
+    {
+        "id": "mqtt_temperature_input",
+        "type": "mqtt in",
+        "z": "tab_temperature_dashboard",
+        "name": "Sensor MQTT input",
+        "topic": "espthsc-1/telemetry",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "mqtt_local_broker",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 120,
+        "wires": [
+            [
+                "parse_sensor_reading",
+                "debug_raw_mqtt"
+            ]
+        ]
+    },
+    {
+        "id": "parse_sensor_reading",
+        "type": "function",
+        "z": "tab_temperature_dashboard",
+        "name": "Parse temperature reading",
+        "func": "// SPDX-License-Identifier: GPL-3.0-only\n// AI-assisted code; see ../NOTICE.md. This diagnostic view follows one device.\nconst topic = String(msg.topic || '');\nconst stateMatch = topic.match(/^(.+)\\/sensor\\/(temperature|humidity|indoor_temperature|indoor_humidity)\\/state$/);\nconst telemetryMatch = topic.match(/^(.+)\\/telemetry$/);\nif (!stateMatch && !telemetryMatch) return null;\n\nconst source = (stateMatch || telemetryMatch)[1];\nlet reading = Buffer.isBuffer(msg.payload) ? msg.payload.toString('utf8') : msg.payload;\nconst number = (value) => {\n    if (typeof value !== 'number' && typeof value !== 'string') return undefined;\n    if (typeof value === 'string' && !value.trim()) return undefined;\n    const parsed = Number(value);\n    return Number.isFinite(parsed) ? parsed : undefined;\n};\nlet temperature;\nlet humidity;\nlet suffix = 'deg F';\nlet timestamp;\n\nif (stateMatch) {\n    const value = number(reading);\n    if (stateMatch[2].includes('humidity')) humidity = value;\n    else temperature = value;\n} else {\n    if (typeof reading === 'string') {\n        try { reading = JSON.parse(reading); } catch { return null; }\n    }\n    if (!reading || typeof reading !== 'object' || Array.isArray(reading)) return null;\n    temperature = number(reading.temperature_f);\n    if (temperature === undefined) {\n        temperature = number(reading.temperature_c);\n        if (temperature !== undefined) suffix = 'deg C';\n    }\n    humidity = number(reading.humidity_percent);\n    timestamp = reading.timestamp;\n}\nif (humidity !== undefined && (humidity < 0 || humidity > 100)) humidity = undefined;\nif (temperature === undefined && humidity === undefined) return null;\n\nlet current = flow.get('currentReading') || {};\n// Do not combine values from different devices when a diagnostic wildcard is used.\nif (current.source !== source) current = { source };\nif (temperature !== undefined) {\n    current.temperature = temperature;\n    current.temperatureSuffix = suffix;\n    let date = new Date();\n    if (timestamp !== undefined && timestamp !== null && timestamp !== '') {\n        const numeric = number(timestamp);\n        const candidate = numeric !== undefined\n            ? new Date(numeric < 1000000000000 ? numeric * 1000 : numeric)\n            : new Date(timestamp);\n        if (!Number.isNaN(candidate.getTime())) date = candidate;\n    }\n    current.lastReading = date.toLocaleString();\n}\nif (humidity !== undefined) current.humidity = humidity;\nflow.set('currentReading', current);\nconst format = (value, unit) => value === undefined ? 'No reading yet' : `${value.toFixed(1)} ${unit}`;\nreturn [\n    { topic: 'temperature', payload: format(current.temperature, current.temperatureSuffix || 'deg F') },\n    { topic: 'humidity', payload: format(current.humidity, '%') },\n    { topic: 'last_reading', payload: current.lastReading || 'No temperature reading yet' }\n];\n",
+        "outputs": 3,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 410,
+        "y": 120,
+        "wires": [
+            [
+                "ui_text_temperature"
+            ],
+            [
+                "ui_text_humidity"
+            ],
+            [
+                "ui_text_last_reading"
+            ]
+        ]
+    },
+    {
+        "id": "ui_text_temperature",
+        "type": "ui-text",
+        "z": "tab_temperature_dashboard",
+        "group": "ui_group_current_reading",
+        "order": 1,
+        "width": "3",
+        "height": "1",
+        "name": "Temperature",
+        "label": "Temperature",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#111827",
+        "className": "",
+        "x": 690,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "ui_text_humidity",
+        "type": "ui-text",
+        "z": "tab_temperature_dashboard",
+        "group": "ui_group_current_reading",
+        "order": 2,
+        "width": "3",
+        "height": "1",
+        "name": "Humidity",
+        "label": "Humidity",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#111827",
+        "className": "",
+        "x": 680,
+        "y": 120,
+        "wires": []
+    },
+    {
+        "id": "ui_text_last_reading",
+        "type": "ui-text",
+        "z": "tab_temperature_dashboard",
+        "group": "ui_group_current_reading",
+        "order": 3,
+        "width": "3",
+        "height": "1",
+        "name": "Last reading",
+        "label": "Last reading",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#111827",
+        "className": "",
+        "x": 700,
+        "y": 160,
+        "wires": []
+    },
+    {
+        "id": "debug_raw_mqtt",
+        "type": "debug",
+        "z": "tab_temperature_dashboard",
+        "name": "Raw MQTT (enable to inspect)",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "x": 450,
+        "y": 240,
+        "wires": []
+    }
+]

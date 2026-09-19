@@ -1,0 +1,32 @@
+# Private configuration and generated firmware
+secrets.yaml
+*.local.yaml
+.esphome/
+*.bin
+*.elf
+*.map
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.passwd
+
+# Node-RED dependencies, credentials, caches, sessions, and backups
+node_modules/
+.config.*.json
+.sessions.json
+flows_cred.json
+*_cred.json
+context/
+*.backup
+*.bak
+*.log
+
+# Operating system and editor metadata
+.DS_Store
+._*
+Thumbs.db
+.vscode/
+*.swp
+*.swo
