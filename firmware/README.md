@@ -29,7 +29,7 @@ The no-screen build is intended to be placed wherever you need a measurement. Th
 These examples were developed around the following hardware:
 
 - **No-screen:** Waveshare [ESP32-C6](https://www.waveshare.com/esp32-c6-zero.htm), using the ESP32-C6-DevKitC-1-compatible board definition, plus a **DHT22** temperature/humidity sensor.
-- **Screen:** Waveshare [ESP32-S3 1.9inch Display Development Board](https://www.waveshare.com/esp32-s3-lcd-1.9.htm), plus a **BME280** temperature/humidity/pressure sensor.
+- **Screen:** Waveshare [ESP32-S3 1.9inch Display Development Board](https://www.waveshare.com/esp32-s3-lcd-1.9.htm), plus a **DHT22** temperature/humidity sensor.
 
 The boards and sensors can be changed, but doing so requires updating the board definition, pin assignments, and possibly the display or sensor components in the YAML. Project-specific parts lists and enclosure information belong in the [hardware BOMs](../hardware/).
 
@@ -64,20 +64,17 @@ The no-screen YAML expects the DHT22 data pin on `GPIO4`.
 
 If you are using a bare four-pin DHT22 rather than a breakout module, add the pull-up resistor specified by the DHT22 documentation between `VCC` and `DATA`. Many ready-made DHT22 breakout boards already include it. The remaining bare-sensor pin is not connected.
 
-### Screen sensor: ESP32-S3 display board and BME280
+### Screen sensor: ESP32-S3 display board and DHT22
 
-The LCD, backlight, and BOOT button are already built into the Waveshare ESP32-S3 display board. No display wiring is required. Connect only the external BME280 sensor:
+The LCD, backlight, and BOOT button are already built into the Waveshare ESP32-S3 display board. No display wiring is required. Connect the external DHT22 sensor:
 
-| BME280 connection | Connect to ESP32-S3 display board |
+| DHT22 connection | Connect to ESP32-S3 display board |
 | --- | --- |
-| `VIN`, `VCC`, or `3V3` | `3V3` |
-| `GND` | `GND VSYS` |
-| `SDA` | `GPIO47` |
-| `SCL` | `GPIO48` |
+| `VCC` or `+` | `3V3` |
+| `DATA`, `OUT`, or `S` | `GPIO6` |
+| `GND` or `-` | `GND` |
 
-The supplied YAML expects the BME280 at I2C address `0x77`. Some BME280 breakouts use `0x76`; if the ESPHome I2C scan reports that address instead, change the YAML's `address:` value to match.
-
-Use `GND VSYS` for the BME280 ground connection on this board. It proved more reliable in testing than the other `GND` header position.
+If you are using a bare four-pin DHT22 rather than a breakout module, add the pull-up resistor specified by the DHT22 documentation between `VCC` and `DATA`. Many ready-made DHT22 breakout boards already include it. The remaining bare-sensor pin is not connected.
 
 The intended desktop orientation places the USB-C connector at the **9 o'clock / left-hand** side. The YAML uses `rotation: 270`. Using another orientation requires revising both rotation and drawing coordinates. Some views still contain portrait-sized coordinates and need correction for this landscape layout; see [Known limitations](#known-limitations).
 
@@ -190,7 +187,7 @@ Replace `fallback_ap_password` with your own 8-63 character password for the set
 
 ### 5. Set the screen weather location and timezone
 
-For ESPTHSC, change `timezone` in your private secrets file to your IANA timezone. `Etc/UTC` is a neutral example. In `weather_url`, replace `YOUR_LATITUDE` and `YOUR_LONGITUDE` with your weather location. Set the URL's `timezone=` parameter to the same timezone, encoding `/` as `%2F`; the example uses `Etc%2FUTC`. Keep the existing weather fields, units, and five-day forecast parameters because the display parser expects them.
+For ESPTHSC, change `timezone` in your private secrets file to your IANA timezone. `Etc/UTC` is a neutral example. In `weather_url`, replace `YOUR_LATITUDE` and `YOUR_LONGITUDE` with your weather location. Set the URL's `timezone=` parameter to the same timezone, encoding `/` as `%2F`; the example uses `Etc%2FUTC`. Keep the supplied current, hourly, and daily weather fields, units, and forecast lengths because the display parser expects them.
 
 These values are read through `!secret timezone` and `!secret weather_url`, so you do not need to put a location in the public screen YAML. The no-screen device does not use these two keys. Open-Meteo receives the coordinates when the display fetches weather; see its [data attribution and terms](https://open-meteo.com/en/terms).
 
@@ -217,32 +214,34 @@ After connection, the device publishes to `<device_name>/sensor/temperature/stat
 
 ## Configure the screen sensor (`espthsc`)
 
-Open `espthsc-1.yaml`. This is the display-oriented build for the Waveshare ESP32-S3-LCD-1.9 and BME280 sensor.
+Open `espthsc-1.yaml`. This is the display-oriented build for the Waveshare ESP32-S3-LCD-1.9 and DHT22 sensor.
 
 ### What the display does
 
-The screen advances through seven views every 20 seconds unless blanked or pinned. These are the implemented views, subject to the layout limitations below. A short press wakes the display and advances the stored view index; while the clock is pinned, the clock remains visible until unpinned.
+The screen advances through seven views every 20 seconds unless blanked or in clock-only mode. The sequence is intentionally ordered from indoor measurements to the broader outdoor view:
 
-1. **Outside now:** current outside temperature, humidity, wind, and precipitation from Open-Meteo.
-2. **Forecast:** today's high, low, precipitation, and short forecast text.
-3. **Inside sensor:** local BME280 temperature and humidity.
-4. **Inside vs. outside:** a side-by-side comparison and temperature difference.
-5. **Five-day outlook:** daily high/low trend and precipitation display.
-6. **Clock:** time, date, Wi-Fi state, device IP address, and battery estimate when available.
-7. **Moon phase:** current moon phase plus upcoming new/full moon dates.
+1. **Inside sensor:** local DHT22 temperature and humidity.
+2. **Inside vs. outside:** a side-by-side temperature comparison and difference.
+3. **Outside now:** current outside temperature, humidity, wind speed, and compass direction from Open-Meteo.
+4. **12-hour outlook:** two-hour samples for temperature, weather, precipitation, wind, and gust alerts.
+5. **Five-day outlook:** daily high/low trend, precipitation, and gust alerts.
+6. **Moon phase:** current moon phase plus upcoming new/full moon dates.
+7. **Clock:** time, date, Wi-Fi state, device IP address, and battery estimate when available.
 
 The board's physical **BOOT** button has three commands:
 
-- **Short press:** wake the display and advance to the next view when the clock is unpinned.
-- **Double short press:** pin or unpin the clock view.
+- **Short press:** wake the display and advance to the next view. If clock-only mode is active, it exits that mode and returns to the inside-sensor view.
+- **Double short press:** enter or leave clock-only mode. Entering the mode opens the clock immediately; leaving it returns to the inside-sensor view.
 - **Press and hold for at least one second:** blank the display. A later short press wakes it again.
+
+The single-click action waits 400 ms before it runs, allowing the firmware to distinguish a single press from a double press more reliably.
 
 ### Reliability behavior
 
-- MQTT telemetry can publish available indoor temperature, humidity, pressure, battery percentage, and a Unix timestamp every minute to `<device_name>/telemetry` when its commented configuration and publish action are enabled.
+- MQTT telemetry can publish available indoor temperature, humidity, battery percentage, and a Unix timestamp every minute to `<device_name>/telemetry` when its commented configuration and publish action are enabled.
 - MQTT is optional to the display itself. If the broker cannot be reached, the display stays running rather than rebooting. The broker must be reachable from the ESP32's Wi-Fi network; a VPN running only on a computer does not provide the ESP32 a route to that broker.
 - The clock saves a snapshot, but it is not a battery-backed real-time clock. Do not rely on that saved timestamp after a restart; see the limitations below. Weather is cached in RAM while powered. The display disables ESPHome's Wi-Fi reboot timeout, so it keeps that cache while waiting for a temporary hotspot to return. A manual or power-cycle reboot still clears cached weather.
-- The BME280 retries initialization once per minute if its first startup probe fails. Repeated I2C `NACK` errors indicate a sensor power, wiring, address, or seating problem.
+- The DHT22 updates every 30 seconds. A missing reading normally points to power, data-line, pull-up-resistor, or sensor-compatibility issues.
 
 ### Screen YAML configuration checklist
 
@@ -252,7 +251,7 @@ The board's physical **BOOT** button has three commands:
 4. **Set the weather location.** Replace the coordinate placeholders in private `weather_url` as described above.
 5. **Make both timezones agree.** Keep `timezone` and the weather URL's `timezone=` parameter in sync so forecast hours line up with the clock.
 6. **Enable MQTT only if needed.** The sample preserves a commented MQTT block and telemetry action. Uncomment both, then set the three `mqtt_*` values in private `secrets.yaml` to publish the one-minute telemetry feed. The display can operate without MQTT.
-7. **Leave sensor/display pins alone unless you changed hardware.** This YAML is pinned for the listed Waveshare board and BME280 wiring. Different boards, displays, or sensors require their own pin/component changes.
+7. **Leave sensor/display pins alone unless you changed hardware.** This YAML expects a DHT22 data line on `GPIO6`. Different boards, displays, or sensors require their own pin/component changes.
 8. Save the file, build it, and perform the first USB flash. This YAML already includes the ESPHome OTA component, so later updates can be sent over Wi-Fi after the device is connected.
 
 ## Closing notes

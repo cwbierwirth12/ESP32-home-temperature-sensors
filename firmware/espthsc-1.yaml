@@ -105,12 +105,6 @@ spi:
   clk_pin: GPIO10
   mosi_pin: GPIO13
 
-i2c:
-  sda: GPIO47
-  scl: GPIO48
-  frequency: 10kHz
-  scan: true
-
 output:
   - platform: ledc
     id: lcd_backlight_pwm
@@ -175,6 +169,26 @@ globals:
     type: std::vector<float>
     restore_value: no
     initial_value: 'std::vector<float>(72, NAN)'
+  - id: hourly_precip_in
+    type: std::vector<float>
+    restore_value: no
+    initial_value: 'std::vector<float>(72, NAN)'
+  - id: hourly_wind_mph
+    type: std::vector<float>
+    restore_value: no
+    initial_value: 'std::vector<float>(72, NAN)'
+  - id: hourly_wind_gust_mph
+    type: std::vector<float>
+    restore_value: no
+    initial_value: 'std::vector<float>(72, NAN)'
+  - id: hourly_weather_code
+    type: std::vector<int>
+    restore_value: no
+    initial_value: 'std::vector<int>(72, 0)'
+  - id: hourly_is_day
+    type: std::vector<int>
+    restore_value: no
+    initial_value: 'std::vector<int>(72, 1)'
   - id: hourly_count
     type: int
     restore_value: no
@@ -196,6 +210,10 @@ globals:
     restore_value: no
     initial_value: 'std::vector<float>(5, NAN)'
   - id: daily_precip_in
+    type: std::vector<float>
+    restore_value: no
+    initial_value: 'std::vector<float>(5, NAN)'
+  - id: daily_wind_gust_mph
     type: std::vector<float>
     restore_value: no
     initial_value: 'std::vector<float>(5, NAN)'
@@ -221,53 +239,22 @@ globals:
     initial_value: "0"
 
 sensor:
-  - platform: bme280_i2c
-    id: indoor_bme280
-    address: 0x77
+  - platform: dht
+    pin: GPIO6
+    model: DHT22
     temperature:
-      id: indoor_temp_77_c
-      internal: true
+      id: indoor_temp_f
+      name: "Indoor Temperature"
+      unit_of_measurement: "°F"
       accuracy_decimals: 1
+      filters:
+        - lambda: return x * 9.0f / 5.0f + 32.0f;
     humidity:
-      id: indoor_humidity_77
-      internal: true
-      accuracy_decimals: 1
-    pressure:
-      id: indoor_pressure_77
-      internal: true
+      id: indoor_humidity
+      name: "Indoor Humidity"
+      unit_of_measurement: "%"
       accuracy_decimals: 1
     update_interval: 30s
-
-  - platform: template
-    id: indoor_temp_f
-    name: "Indoor Temperature"
-    unit_of_measurement: "°F"
-    accuracy_decimals: 1
-    lambda: |-
-      float c = id(indoor_temp_77_c).state;
-      if (isnan(c)) return NAN;
-      return c * 9.0f / 5.0f + 32.0f;
-    update_interval: 10s
-
-  - platform: template
-    id: indoor_humidity
-    name: "Indoor Humidity"
-    unit_of_measurement: "%"
-    accuracy_decimals: 1
-    lambda: |-
-      float h = id(indoor_humidity_77).state;
-      return h;
-    update_interval: 10s
-
-  - platform: template
-    id: indoor_pressure
-    name: "Indoor Pressure"
-    internal: true
-    accuracy_decimals: 1
-    lambda: |-
-      float p = id(indoor_pressure_77).state;
-      return p;
-    update_interval: 10s
 
   - platform: template
     id: outside_temp_f
@@ -286,6 +273,12 @@ sensor:
     name: "Outside Wind"
     unit_of_measurement: "mph"
     accuracy_decimals: 1
+
+  - platform: template
+    id: outside_wind_direction_deg
+    name: "Outside Wind Direction"
+    unit_of_measurement: "°"
+    accuracy_decimals: 0
 
   - platform: template
     id: outside_precip_in
@@ -312,17 +305,6 @@ sensor:
     accuracy_decimals: 2
 
 interval:
-  # Retry initialization without rebooting if the BME280 is still powering up.
-  - interval: 1min
-    then:
-      - lambda: |-
-          if (isnan(id(indoor_temp_77_c).state)) {
-            ESP_LOGI("bme280", "Retrying BME280 initialization");
-            id(indoor_bme280).reset_to_construction_state();
-            id(indoor_bme280).setup();
-            id(indoor_bme280).update();
-          }
-
   - interval: 1min
     then:
       - lambda: |-
@@ -339,11 +321,9 @@ interval:
 
       #       float temperature_f = id(indoor_temp_f).state;
       #       float humidity = id(indoor_humidity).state;
-      #       float pressure_hpa = id(indoor_pressure).state;
       #       float battery_percent = id(battery_level);
       #       if (!isnan(temperature_f)) root["temperature_f"] = temperature_f;
       #       if (!isnan(humidity)) root["humidity_percent"] = humidity;
-      #       if (!isnan(pressure_hpa)) root["pressure_hpa"] = pressure_hpa;
       #       if (!isnan(battery_percent)) root["battery_percent"] = battery_percent;
 
   - interval: 30s
@@ -406,14 +386,6 @@ binary_sensor:
     on_multi_click:
       - timing:
           - ON for at most 350ms
-          - OFF for at least 250ms
-        then:
-          - script.execute: wake_display
-          - lambda: |-
-              id(screen_index) = (id(screen_index) + 1) % 7;
-              id(main_display).update();
-      - timing:
-          - ON for at most 350ms
           - OFF for at most 350ms
           - ON for at most 350ms
           - OFF for at least 250ms
@@ -422,7 +394,26 @@ binary_sensor:
           - lambda: |-
               id(clock_pinned) = !id(clock_pinned);
               if (id(clock_pinned)) {
-                id(screen_index) = 5;
+                id(screen_index) = 6;
+                ESP_LOGI("button", "Clock-only mode enabled");
+              } else {
+                id(screen_index) = 0;
+                ESP_LOGI("button", "Clock-only mode disabled");
+              }
+              id(main_display).update();
+      - timing:
+          - ON for at most 350ms
+          # Wait long enough to distinguish a single click from a double click.
+          - OFF for at least 400ms
+        then:
+          - script.execute: wake_display
+          - lambda: |-
+              if (id(clock_pinned)) {
+                id(clock_pinned) = false;
+                id(screen_index) = 0;
+                ESP_LOGI("button", "Clock-only mode exited by single click");
+              } else {
+                id(screen_index) = (id(screen_index) + 1) % 7;
               }
               id(main_display).update();
       - timing:
@@ -562,17 +553,27 @@ script:
                                 id(outside_temp_f).publish_state(current["temperature_2m"].as<float>());
                                 id(outside_humidity).publish_state(current["relative_humidity_2m"].as<float>());
                                 id(outside_wind_mph).publish_state(current["wind_speed_10m"].as<float>());
+                                id(outside_wind_direction_deg).publish_state(current["wind_direction_10m"].as<float>());
                                 id(outside_precip_in).publish_state(current["precipitation"].as<float>());
 
                                 int weather_code = current["weather_code"].as<int>();
-                                id(outside_condition) = code_to_text(weather_code);
+                                int is_day = current["is_day"].as<int>();
+                                id(outside_condition) = weather_code == 0
+                                  ? (is_day ? "Sunny" : "Clear")
+                                  : code_to_text(weather_code);
+                                ESP_LOGI("weather", "Current weather code %d, is_day %d", weather_code, is_day);
 
                                 id(hourly_cache_valid) = false;
                                 id(hourly_count) = 0;
                                 if (!hourly.isNull()) {
                                   JsonArray times = hourly["time"];
                                   JsonArray temps = hourly["temperature_2m"];
-                                  if (!times.isNull() && !temps.isNull() && times.size() > 0 && temps.size() > 0) {
+                                  JsonArray precip = hourly["precipitation"];
+                                  JsonArray codes = hourly["weather_code"];
+                                  JsonArray day_flags = hourly["is_day"];
+                                  JsonArray winds = hourly["wind_speed_10m"];
+                                  JsonArray gusts = hourly["wind_gusts_10m"];
+                                  if (!times.isNull() && !temps.isNull() && !precip.isNull() && !codes.isNull() && !day_flags.isNull() && !winds.isNull() && !gusts.isNull() && times.size() > 0 && temps.size() > 0) {
                                     const char *start_text = times[0] | "";
                                     int year = 0;
                                     int month = 0;
@@ -591,8 +592,18 @@ script:
                                       time_t start_epoch = mktime(&start_tm);
                                       if (start_epoch > 0) {
                                         int count = std::min<int>(temps.size(), id(hourly_temp_f).size());
+                                        count = std::min<int>(count, precip.size());
+                                        count = std::min<int>(count, codes.size());
+                                        count = std::min<int>(count, day_flags.size());
+                                        count = std::min<int>(count, winds.size());
+                                        count = std::min<int>(count, gusts.size());
                                         for (int i = 0; i < count; i++) {
                                           id(hourly_temp_f)[i] = temps[i].as<float>();
+                                          id(hourly_precip_in)[i] = precip[i].as<float>();
+                                          id(hourly_weather_code)[i] = codes[i].as<int>();
+                                          id(hourly_is_day)[i] = day_flags[i].as<int>();
+                                          id(hourly_wind_mph)[i] = winds[i].as<float>();
+                                          id(hourly_wind_gust_mph)[i] = gusts[i].as<float>();
                                         }
                                         id(hourly_count) = count;
                                         id(hourly_start_epoch) = start_epoch;
@@ -606,15 +617,18 @@ script:
                                 JsonArray highs = daily["temperature_2m_max"];
                                 JsonArray lows = daily["temperature_2m_min"];
                                 JsonArray precip = daily["precipitation_sum"];
+                                JsonArray gusts = daily["wind_gusts_10m_max"];
                                 JsonArray codes = daily["weather_code"];
 
                                 id(daily_cache_valid) = false;
                                 int daily_count = std::min<int>(5, std::min<int>(highs.size(), lows.size()));
                                 daily_count = std::min<int>(daily_count, std::min<int>(precip.size(), codes.size()));
+                                daily_count = std::min<int>(daily_count, gusts.size());
                                 for (int i = 0; i < daily_count; i++) {
                                   id(daily_high_f)[i] = highs[i].as<float>();
                                   id(daily_low_f)[i] = lows[i].as<float>();
                                   id(daily_precip_in)[i] = precip[i].as<float>();
+                                  id(daily_wind_gust_mph)[i] = gusts[i].as<float>();
                                   id(daily_weather_code)[i] = codes[i].as<int>();
                                 }
                                 id(daily_cache_valid) = daily_count >= 3;
@@ -703,6 +717,10 @@ color:
     red: 100%
     green: 67%
     blue: 28%
+  - id: alert
+    red: 100%
+    green: 20%
+    blue: 20%
   - id: cool
     red: 32%
     green: 68%
@@ -742,7 +760,9 @@ display:
       }
 
       it.fill(id(black));
-      int screen = id(clock_pinned) ? 5 : id(screen_index);
+      // Keep the physical page order independent from the legacy screen IDs.
+      static const int screen_order[] = {2, 3, 0, 1, 4, 6, 5};
+      int screen = id(clock_pinned) ? 5 : screen_order[id(screen_index) % 7];
 
       auto cached_hourly_temp = [&]() -> float {
         auto now = id(local_time).now();
@@ -766,27 +786,118 @@ display:
         if (isnan(display_outside_temp_f)) {
           it.print(85, 82, id(font_medium), id(turquoise), TextAlign::CENTER, "No weather yet");
           it.printf(85, 128, id(font_small), id(white), TextAlign::CENTER, "%s", id(weather_status).c_str());
-          it.print(85, 182, id(font_small), id(muted), TextAlign::CENTER, "Check hotspot/internet");
+          it.print(85, 154, id(font_small), id(muted), TextAlign::CENTER, "Check hotspot/internet");
         } else if (using_forecast_temp) {
           it.printf(85, 58, id(font_large), id(white), TextAlign::CENTER, "%.1f°", display_outside_temp_f);
           it.print(85, 112, id(font_medium), id(turquoise), TextAlign::CENTER, "Forecasted");
-          it.print(8, 166, id(font_small), id(muted), "Wi-Fi offline");
-          it.print(8, 194, id(font_small), id(white), "Using hourly outlook");
-          it.printf(8, 222, id(font_small), id(white), "%s", id(weather_status).c_str());
+          it.print(8, 136, id(font_small), id(muted), "Wi-Fi offline");
+          it.print(8, 158, id(font_small), id(white), "Using hourly outlook");
         } else {
           it.printf(85, 58, id(font_large), id(white), TextAlign::CENTER, "%.1f°", display_outside_temp_f);
-          it.printf(85, 112, id(font_medium), id(turquoise), TextAlign::CENTER, "%s", id(outside_condition).c_str());
-          it.printf(8, 166, id(font_small), id(white), "Humidity %.0f%%", id(outside_humidity).state);
-          it.printf(8, 194, id(font_small), id(white), "Wind %.1f mph", id(outside_wind_mph).state);
-          it.printf(8, 222, id(font_small), id(white), "Precip %.2f in", id(outside_precip_in).state);
+          it.printf(85, 100, id(font_medium), id(turquoise), TextAlign::CENTER, "%s", id(outside_condition).c_str());
+          it.printf(8, 128, id(font_small), id(white), "Humidity %.0f%%", id(outside_humidity).state);
+          it.printf(8, 152, id(font_small), id(white), "Wind %.1f mph", id(outside_wind_mph).state);
+
+          float direction = id(outside_wind_direction_deg).state;
+          if (!isnan(direction)) {
+            auto cardinal = [](float degrees) -> const char * {
+              static const char *points[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+              int index = (int) floorf((degrees + 22.5f) / 45.0f) % 8;
+              return points[index < 0 ? index + 8 : index];
+            };
+            const int compass_x = 250;
+            const int compass_y = 92;
+            const int compass_radius = 34;
+            float radians = direction * 0.01745329252f;
+            float dx = sinf(radians);
+            float dy = -cosf(radians);
+            int arrow_x = compass_x + (int) roundf(dx * (compass_radius - 5));
+            int arrow_y = compass_y + (int) roundf(dy * (compass_radius - 5));
+            int tail_x = compass_x - (int) roundf(dx * 8);
+            int tail_y = compass_y - (int) roundf(dy * 8);
+            int back_x = arrow_x - (int) roundf(dx * 9);
+            int back_y = arrow_y - (int) roundf(dy * 9);
+            int side_x = (int) roundf(-dy * 5);
+            int side_y = (int) roundf(dx * 5);
+            it.circle(compass_x, compass_y, compass_radius, id(muted));
+            it.print(compass_x, compass_y - compass_radius - 12, id(font_small), id(white), TextAlign::CENTER, "N");
+            it.print(compass_x + compass_radius + 11, compass_y, id(font_small), id(muted), TextAlign::CENTER, "E");
+            it.print(compass_x, compass_y + compass_radius + 12, id(font_small), id(muted), TextAlign::CENTER, "S");
+            it.print(compass_x - compass_radius - 11, compass_y, id(font_small), id(muted), TextAlign::CENTER, "W");
+            it.line(tail_x, tail_y, arrow_x, arrow_y, id(turquoise));
+            it.line(arrow_x, arrow_y, back_x + side_x, back_y + side_y, id(turquoise));
+            it.line(arrow_x, arrow_y, back_x - side_x, back_y - side_y, id(turquoise));
+            it.printf(compass_x, 158, id(font_small), id(turquoise), TextAlign::CENTER, "%s %.0f°", cardinal(direction), direction);
+          }
         }
       } else if (screen == 1) {
-        header("Forecast");
-        it.printf(8, 52, id(font_medium), id(warm), "Today");
-        it.printf(8, 88, id(font_small), id(white), "High %.0f°  Low %.0f°", id(today_high_f).state, id(today_low_f).state);
-        it.printf(8, 116, id(font_small), id(white), "Precip %.2f in", id(today_precip_in).state);
-        it.printf(8, 170, id(font_small), id(turquoise), "%s", id(forecast_1).c_str());
-        it.printf(8, 226, id(font_small), id(turquoise), "%s", id(forecast_2).c_str());
+        it.print(8, 8, id(font_small), id(turquoise), "12-Hour Outlook");
+        it.line(8, 30, 312, 30, id(muted));
+        auto now = id(local_time).now();
+        if (!id(hourly_cache_valid) || !now.is_valid() || id(hourly_start_epoch) <= 0 || id(hourly_count) < 13) {
+          it.print(160, 74, id(font_medium), id(turquoise), TextAlign::CENTER, "No outlook yet");
+          it.printf(160, 112, id(font_small), id(white), TextAlign::CENTER, "%s", id(weather_status).c_str());
+          it.print(160, 142, id(font_small), id(muted), TextAlign::CENTER, "Connect hotspot to load");
+        } else {
+          long elapsed = now.timestamp - id(hourly_start_epoch);
+          int first_hour = elapsed > 0 ? (int) (elapsed / 3600) : 0;
+          if (first_hour + 12 >= id(hourly_count)) {
+            it.print(160, 74, id(font_medium), id(turquoise), TextAlign::CENTER, "Outlook expired");
+            it.print(160, 112, id(font_small), id(muted), TextAlign::CENTER, "Connect hotspot to refresh");
+          } else {
+            float temperatures[6];
+            float low = id(hourly_temp_f)[first_hour + 2];
+            float high = low;
+            for (int i = 0; i < 6; i++) {
+              temperatures[i] = id(hourly_temp_f)[first_hour + ((i + 1) * 2)];
+              low = std::min(low, temperatures[i]);
+              high = std::max(high, temperatures[i]);
+            }
+            if (high - low < 6.0f) {
+              high += 3.0f;
+              low -= 3.0f;
+            }
+
+            auto temp_y = [&](float temperature) -> int {
+              float ratio = (high - temperature) / (high - low);
+              return 78 + (int) roundf(ratio * 34.0f);
+            };
+            auto code_to_short = [](int code, bool is_day) -> const char * {
+              if (code == 0) return is_day ? "Sun" : "Clear";
+              if (code == 1 || code == 2) return "Part";
+              if (code == 3) return "Cloud";
+              if (code == 45 || code == 48) return "Fog";
+              if (code >= 51 && code <= 67) return "Rain";
+              if (code >= 71 && code <= 77) return "Snow";
+              if (code >= 80 && code <= 82) return "Shwr";
+              if (code >= 95 && code <= 99) return "Storm";
+              return "Wx";
+            };
+            int xs[6] = {24, 80, 136, 192, 248, 304};
+            for (int i = 0; i < 6; i++) {
+              int sample_index = first_hour + ((i + 1) * 2);
+              int point_y = temp_y(temperatures[i]);
+              if (i > 0) {
+                it.line(xs[i - 1], temp_y(temperatures[i - 1]), xs[i], point_y, id(cool));
+              }
+              it.filled_circle(xs[i], point_y, 3, id(cool));
+              it.printf(xs[i], 38, id(font_small), id(white), TextAlign::CENTER, "%.0f°", temperatures[i]);
+              it.print(xs[i], 56, id(font_small), id(muted), TextAlign::CENTER, code_to_short(id(hourly_weather_code)[sample_index], id(hourly_is_day)[sample_index] != 0));
+              it.printf(xs[i], 126, id(font_small), id(cool), TextAlign::CENTER, "%.2f\"", id(hourly_precip_in)[sample_index]);
+              it.printf(xs[i], 144, id(font_small), id(white), TextAlign::CENTER, "%.0f mph", id(hourly_wind_mph)[sample_index]);
+              if (id(hourly_wind_gust_mph)[sample_index] >= 20.0f) {
+                it.print(xs[i] + 18, 144, id(font_small), id(alert), "!");
+              }
+
+              time_t sample_time = id(hourly_start_epoch) + (sample_index * 3600);
+              struct tm sample_tm;
+              localtime_r(&sample_time, &sample_tm);
+              char label[8];
+              strftime(label, sizeof(label), "%H:%M", &sample_tm);
+              it.printf(xs[i], 162, id(font_small), id(muted), TextAlign::CENTER, "%s", label);
+            }
+          }
+        }
       } else if (screen == 2) {
         header("Inside Sensor");
         if (isnan(id(indoor_temp_f).state)) {
@@ -799,8 +910,8 @@ display:
         } else {
           it.printf(85, 126, id(font_medium), id(turquoise), TextAlign::CENTER, "%.1f%% RH", id(indoor_humidity).state);
         }
-        it.print(8, 202, id(font_small), id(muted), "BME280 I2C 0x77");
-        it.print(8, 230, id(font_small), id(white), "Pressure stored hidden");
+        it.print(8, 202, id(font_small), id(muted), "DHT22 on GPIO6");
+        it.print(8, 230, id(font_small), id(white), "Temperature and humidity");
       } else if (screen == 3) {
         header("Inside vs Outside");
         float diff = id(indoor_temp_f).state - display_outside_temp_f;
@@ -882,6 +993,9 @@ display:
               }
             }
             it.print(xs[i], 36, id(font_small), id(white), TextAlign::CENTER, label);
+            if (!isnan(id(daily_wind_gust_mph)[i]) && id(daily_wind_gust_mph)[i] >= 20.0f) {
+              it.print(xs[i] + 22, 36, id(font_small), id(alert), "!");
+            }
             it.print(xs[i], 53, id(font_small), id(muted), TextAlign::CENTER, code_to_short(id(daily_weather_code)[i]));
             int bar_h = (int) roundf((id(daily_precip_in)[i] / max_precip) * 14.0f);
             if (bar_h > 0) {
@@ -918,6 +1032,7 @@ display:
           it.print(38, 144, id(font_small), id(warm), "H");
           it.print(54, 144, id(font_small), id(cool), "L");
           it.print(77, 144, id(font_small), id(turquoise), "Rain in");
+          it.print(180, 144, id(font_small), id(alert), "! gust >=20");
         }
       } else if (screen == 5) {
         auto now = id(local_time).now();

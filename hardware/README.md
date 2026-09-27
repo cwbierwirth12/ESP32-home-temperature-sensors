@@ -11,6 +11,7 @@ The firmware setup, pin wiring, and software configuration are documented in the
 
 - [ESPTH bill of materials](#espth-bill-of-materials)
 - [ESPTHSC bill of materials](#espthsc-bill-of-materials)
+- [ESPTHSC display and controls](#espthsc-display-and-controls)
 - [Enclosures and assembly](#enclosures-and-assembly)
 - [3D-printing guidance](#3d-printing-guidance)
 - [Troubleshooting](#troubleshooting)
@@ -37,13 +38,33 @@ The ESPTHSC is the screen-equipped version. It shows local and remote weather in
 | Part | Notes |
 | --- | --- |
 | [Waveshare ESP32-S3-LCD-1.9](https://www.waveshare.com/esp32-s3-lcd-1.9.htm) | ESP32-S3 board with built-in 1.9-inch display. |
-| [Waveshare BME280 environmental sensor](https://www.waveshare.com/bme280-environmental-sensor.htm) | Measures local temperature, humidity, and barometric pressure. |
+| [Waveshare DHT22 temperature and humidity sensor](https://www.waveshare.com/dht22-temperature-humidity-sensor.htm) | Measures local temperature and humidity. |
 | USB-C data/power cable | Use a data-capable cable for the first firmware flash. |
 | Regulated 5 V USB power source, 1 A or greater recommended | Practical adapter recommendation; actual current varies with display, Wi-Fi, peripherals, and battery charging. |
 | Optional 3.7 V 450 mAh 502535 LiPo battery | The [example battery](https://www.amazon.com/dp/B0GDQMKQ36) is useful as short-term backup power while moving the display between rooms or disconnecting it from a computer. It is not intended to replace normal USB power. **Check the connector before ordering:** Waveshare documents an MX1.25 battery header on this board, while this example battery is listed with a JST-PH 2.0 connector. Use an appropriate adapter or a battery with the correct connector; never force a connector. |
 | ESPTHSC enclosure files | Still in development; files will be added under [3D Print](./3D%20Print/) when ready. No screen STL or STEP files are currently included. |
-| Sensor wiring | Four conductors for power, ground, SDA, and SCL, sized to fit the enclosure. |
+| Sensor wiring | Three conductors for power, ground, and data. The supplied firmware uses `GPIO6` for the DHT22 data line. |
 | M2 x 4 mm and M2 x 6 mm screws | This [M2 screw kit](https://www.amazon.com/dp/B0D3X4LJD2) is the set used during development. |
+
+## ESPTHSC display and controls
+
+The ESPTHSC firmware is configured for desktop use with the USB-C connector at the **9 o'clock / left-hand** side. It automatically advances every 20 seconds through this sequence:
+
+1. Indoor temperature and humidity from the DHT22.
+2. Indoor versus outside temperature comparison.
+3. Current outdoor conditions, including wind speed and compass direction.
+4. 12-hour outlook with two-hour samples for temperature, weather, precipitation, wind, and gust alerts.
+5. Five-day forecast.
+6. Moon phase.
+7. Clock, network status, and battery estimate.
+
+The physical **BOOT** button controls the display:
+
+- **One short press:** wakes the display and advances to the next view. If clock-only mode is active, it exits that mode and returns to the indoor view.
+- **Two short presses:** toggles clock-only mode. Enabling it opens the clock immediately; disabling it returns to the indoor view.
+- **Press and hold for at least one second:** blanks the display. A later short press wakes it.
+
+The short-press action waits 400 ms before it runs so the firmware can reliably distinguish a single press from a double press.
 
 ## Raspberry Pi Zero 2W Standalone  (OPTIONAL)
 
